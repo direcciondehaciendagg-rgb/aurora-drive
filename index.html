@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Gestor Aurora Digital</title>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <style>
+        body { font-family: Arial, sans-serif; max-width: 600px; margin: 30px auto; padding: 20px; background: #f4f6f9; }
+        .card { background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); margin-bottom: 20px; }
+        input, select, button { width: 100%; padding: 10px; margin-top: 8px; margin-bottom: 15px; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box; }
+        button { background: #0056b3; color: white; border: none; font-weight: bold; cursor: pointer; }
+        button:hover { background: #004085; }
+        .item { padding: 10px; border-bottom: 1px solid #eee; display: flex; justify-content: space-between; align-items: center; }
+    </style>
+</head>
+<body>
+
+    <div class="card">
+        <h2>Subir Archivo o Registro</h2>
+        <input type="text" id="titulo" placeholder="Título o descripción del documento">
+        <input type="text" id="subido_por" placeholder="Tu nombre (ej: Alex)">
+        <input type="file" id="archivo">
+        <button onclick="subirArchivo()">Guardar en Supabase</button>
+    </div>
+
+    <div class="card">
+        <h2>Archivos Guardados</h2>
+        <div id="lista-archivos">Cargando...</div>
+    </div>
+
+    <script>
+        // PEGA TUS CREDENCIALES REALES AQUÍ
+        const SUPABASE_URL = 'https://dwqnthvrorvihhcsbqys.supabase.co';
+        const SUPABASE_KEY = 'sb_publishable_hbI320soMjozMXyjkai2jw_IH4s0xQ8';
+
+        const { createClient } = supabase;
+        const _supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
+
+        async function subirArchivo() {
+            const titulo = document.getElementById('titulo').value;
+            const subido_por = document.getElementById('subido_por').value;
+            const archivoInput = document.getElementById('archivo').files[0];
+
+            if (!titulo || !archivoInput) {
+                alert('Por favor completa el título y selecciona un archivo.');
+                return;
+            }
+
+            // Creamos un nombre súper seguro y plano (solo números y extensión)
+            const extension = archivoInput.name.split('.').pop();
+            const nombreArchivo = 'file_' + Date.now() + '.' + extension;
+
+            // 1. Subir al bucket 'adjuntos'
+            const { data: storageData, error: storageError } = await _supabase.storage
+                .from('adjuntos')
+                .upload(nombreArchivo, archivoInput);
+
+            if (storageError) {
+                alert('Error al subir el archivo: ' + storageError.message);
+                return;
+            }
+
+            // 2. Obtener URL pública
+            const { data: publicUrlData } = _supabase.storage
+                .from('adjuntos')
+                .getPublicUrl(nombreArchivo);
+
+            const url_archivo = publicUrlData.publicUrl;
+
+            // 3. Guardar en la tabla 'documentos'
+            const { error: dbError } = await _supabase
+                .from('documentos')
+                .insert([{ titulo, tipo: archivoInput.type, url_archivo, subido_por }]);
+
+            if (dbError) {
+                alert('Error al guardar en la base de datos: ' + dbError.message);
+            } else {
+                alert('¡Archivo guardado con éxito!');
+                document.getElementById('titulo').value = '';
+                document.getElementById('archivo').value = '';
+                cargarArchivos();
+            }
+        }
+
+        async function cargarArchivos() {
+            const contenedor = document.getElementById('lista-archivos');
+            contenedor.innerHTML = 'Cargando...';
+
+            const { data, error } = await _supabase
+                .from('documentos')
+                .select('*')
+                .order('created_at', { ascending: false });
+
+            if (error) {
+                contenedor.innerHTML = 'Error al cargar los archivos.';
+                return;
+            }
+
+            if (data.length === 0) {
+                contenedor.innerHTML = '<p>No hay archivos guardados todavía.</p>';
+                return;
+            }
+
+            contenedor.innerHTML = '';
+            data.forEach(item => {
+                contenedor.innerHTML += `
+                    <div class="item">
+                        <div>
+                            <strong>${item.titulo}</strong><br>
+                            <small>Subido por: ${item.subido_por || 'Anónimo'}</small>
+                        </div>
+                        <div>
+                            <a href="${item.url_archivo}" target="_blank" style="margin-right: 10px;">Descargar</a>
+                            <button onclick="eliminarRegistro('${item.id}')" style="background: #dc3545; padding: 5px 10px; margin: 0;">Borrar</button>
+                        </div>
+                    </div>
+                `;
+            });
+        }
+
+        async function eliminarRegistro(id) {
+            if (!confirm('¿Estás seguro de eliminar este registro?')) return;
+
+            const { error } = await _supabase
+                .from('documentos')
+                .delete()
+                .eq('id', id);
+
+            if (error) {
+                alert('Error al eliminar: ' + error.message);
+            } else {
+                cargarArchivos();
+            }
+        }
+
+        cargarArchivos();
+    </script>
+</body>
+</html>
